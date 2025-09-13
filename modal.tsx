@@ -30,7 +30,7 @@ function Modal(props: ModalProps) {
 
             <ModalContent>
                 <Forms.FormTitle tag="h5">Message</Forms.FormTitle>
-                <TextInput
+                <TextArea
                     onChange={(e: string) => {
                         setMessage(e);
                     }}
