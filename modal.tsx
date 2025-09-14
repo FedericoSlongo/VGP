@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { DataStore } from "@api/index";
 import { insertTextIntoChatInputBox } from "@utils/discord";
 import {
     ModalContent,
@@ -13,14 +14,33 @@ import {
     ModalRoot,
     openModal,
 } from "@utils/modal";
-import { Button, Forms, React, TextArea, TextInput } from "@webpack/common";
+import { Button, ChannelStore, Forms, React, SelectedChannelStore, TextArea, useEffect } from "@webpack/common";
 
 import { encrypt } from "./index";
 
+const localStorageKeysString = "gpgPublicKeys";
+
 function Modal(props: ModalProps) {
-    // TODO: Nell'initial state della chiave mettiamo il valore che leggiamo da file di testo
+    // If the user already entered the public key for the recipient he doesn't have to insert it again...
+    const recipientId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
     const [pKey, setPKey] = React.useState("");
     const [message, setMessage] = React.useState("");
+    const [publicKeyDictChange, setPublicKeyDictChange] = React.useState(false);
+    const [publicKeys, setPublicKeys] = React.useState({});
+
+    // Execute this code only one time
+    useEffect(() => {
+        DataStore.get(localStorageKeysString).then(dataStorageKeys => {
+            if (dataStorageKeys != null) {
+                const parsedKeys = JSON.parse(dataStorageKeys);
+                const updatedKeys = { ...publicKeys, ...parsedKeys };
+                setPublicKeys(updatedKeys);
+
+                const recipientKey = updatedKeys[recipientId];
+                setPKey(recipientKey);
+            }
+        });
+    }, []);
 
     return (
         <ModalRoot {...props}>
@@ -38,8 +58,10 @@ function Modal(props: ModalProps) {
 
                 <Forms.FormTitle tag="h5">Recipient public key</Forms.FormTitle>
                 <TextArea
-                    defaultValue={pKey}
+                    value={pKey}
                     onChange={(e: string) => {
+                        setPublicKeys({ ...publicKeys, [recipientId]: e });
+                        setPublicKeyDictChange(true);
                         setPKey(e);
                     }}
                 />
@@ -48,6 +70,10 @@ function Modal(props: ModalProps) {
                 <Button
                     color={Button.Colors.GREEN}
                     onClick={() => {
+                        if (publicKeyDictChange) {
+                            DataStore.set(localStorageKeysString, JSON.stringify(publicKeys));
+                        }
+
                         encrypt(message, pKey).then(encryptedMessage => {
                             insertTextIntoChatInputBox(encryptedMessage);
                             props.onClose();

@@ -30,12 +30,13 @@ const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat }) => {
                 viewBox="0 0 47 47"
             >
                 <g>
-                    <path fill="currentColor" d="M123.5,0C10.522,0,0,10.522,0,23.5C0,36.479,10.522,47,23.5,47C36.479,47,47,36.479,47,23.5C47,10.522,36.479,0,23.5,0z
+                    <path fill="currentColor" d="M23.5,0C10.522,0,0,10.522,0,23.5C0,36.479,10.522,47,23.5,47C36.479,47,47,36.479,47,23.5C47,10.522,36.479,0,23.5,0z
                     M30.07,34.686L30.07,34.686c0,2.53-2.941,4.58-6.573,4.58c-3.631,0-6.577-2.05-6.577-4.58c0-0.494,3.648-14.979,3.648-14.979
                     c-2.024-1.06-3.418-3.161-3.418-5.609c0-3.515,2.838-6.362,6.361-6.362c3.514,0,6.35,2.848,6.35,6.362
-                    c0,2.448-1.391,4.55-3.416,5.609c0,0,3.598,14.455,3.611,14.88l0.022,0.099H30.07z"/>
+                    c0,2.448-1.391,4.55-3.416,5.609c0,0,3.598,14.455,3.611,14.88l0.022,0.099H30.07z" />
                 </g>
             </svg>
+
         </ChatBarButton>
     );
 };
@@ -51,10 +52,10 @@ function formatKey(key: string): string {
 export async function encrypt(message: string, public_key_recipient: string): Promise<string> {
     const { encrypt, readKey } = openpgp;
     const private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
-    const public_key = await readKey({ armoredKey: formatKey(settings.store.pgpPublicKey) });
+    const public_key = await readKey({ armoredKey: formatKey(settings.store.pgpPublicKey) }) as openpgp.PublicKey;
 
 
-    const pubKey_r = await readKey({ armoredKey: public_key_recipient });
+    const pubKey_r = await readKey({ armoredKey: public_key_recipient }) as openpgp.PublicKey;
 
     const encrypted = await encrypt({
         message: await openpgp.createMessage({ text: message }),
