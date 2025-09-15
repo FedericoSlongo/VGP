@@ -7,7 +7,9 @@
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
+import { ChannelStore } from "@webpack/common";
 
+import { buildDecryptModal } from "./decryptModal";
 import { buildModal } from "./modal";
 import * as openpgp from "./openpgp.mjs";
 
@@ -41,6 +43,18 @@ const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat }) => {
     );
 };
 
+function DecryptMessageIcon() {
+    return (
+        <svg
+            fill="currentColor"
+            width={20} height={20}
+            viewBox={"0 0 16 16"}
+        >
+            <path d="M10.5 9C12.9853 9 15 6.98528 15 4.5C15 2.01472 12.9853 0 10.5 0C8.01475 0 6.00003 2.01472 6.00003 4.5C6.00003 5.38054 6.25294 6.20201 6.69008 6.89574L0.585815 13L3.58292 15.9971L4.99714 14.5829L3.41424 13L5.00003 11.4142L6.58292 12.9971L7.99714 11.5829L6.41424 10L8.10429 8.30995C8.79801 8.74709 9.61949 9 10.5 9ZM10.5 7C11.8807 7 13 5.88071 13 4.5C13 3.11929 11.8807 2 10.5 2C9.11932 2 8.00003 3.11929 8.00003 4.5C8.00003 5.88071 9.11932 7 10.5 7Z" />
+        </svg>
+    );
+}
+
 function formatKey(key: string): string {
     const start: string = key.match(/-----.*?-----/g)?.at(0)?.toString()!;
     const end: string = key.match(/-----.*?-----/g)?.pop()?.toString()!;
@@ -66,6 +80,17 @@ export async function encrypt(message: string, public_key_recipient: string): Pr
     return encrypted;
 }
 
+async function decryptMessage(message: string): Promise<any> {
+    const { decrypt } = openpgp;
+    const private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
+
+    const decrypted = await decrypt({
+        message: await openpgp.readMessage({ armoredMessage: message }),
+        decryptionKeys: [private_key],
+    });
+
+    return decrypted;
+}
 
 const settings = definePluginSettings({
     pgpPrivateKey: {
@@ -87,5 +112,21 @@ export default definePlugin({
     settings,
 
     renderChatBarButton: ChatBarIcon,
+    decryptMessageIcon: () => <DecryptMessageIcon />,
 
+    GPG_REGEX: /-----BEGIN PGP MESSAGE-----[A-Za-z0-9+/=\r\n]+?-----END PGP MESSAGE-----/g,
+    renderMessagePopoverButton(message) {
+        return this.GPG_REGEX.test(message?.content) ?
+            {
+                label: "Decrypt Message",
+                icon: this.decryptMessageIcon,
+                message: message,
+                channel: ChannelStore.getChannel(message.channel_id),
+                onClick: async () => {
+                    const decrypted = await decryptMessage(message.content);
+                    buildDecryptModal(decrypted.data);
+                }
+            }
+            : null;
+    },
 });
