@@ -5,14 +5,14 @@
  */
 
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
+import { DataStore } from "@api/index";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
-import { ChannelStore, SelectedChannelStore } from "@webpack/common";
+import { ChannelStore, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import { buildDecryptModal } from "./decryptModal";
 import { buildModal } from "./modal";
 import * as openpgp from "./openpgp.mjs";
-import { DataStore } from "@api/index";
 
 const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat }) => {
     if (!isMainChat) return null;
@@ -81,23 +81,39 @@ export async function encrypt(message: string, public_key_recipient: string): Pr
     return encrypted;
 }
 
-async function decryptMessage(message: string, public_key_recipient: string, authorId?: string): Promise<any> {
+async function decryptMessage(message: string, authorId: string): Promise<any> {
     const { decrypt, readKey } = openpgp;
     const private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
-    let verificationKeyArmored = public_key_recipient;
+    const senderId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
 
-    /* // If the author is the current user, use the user's public key for verification
-    if (authorId && authorId === window.UserStore.getCurrentUser()?.id) {
-        verificationKeyArmored = settings.store.pgpPublicKey;
+    let verificationKeyArmored: string = "";
+
+    // If the author is the current user, use the user's public key for verification
+    if (authorId === UserStore.getCurrentUser().id) {
+        verificationKeyArmored = formatKey(settings.store.pgpPublicKey);
+    } else {
+        // Load public keys from DataStore
+        try {
+            const dataStorageKeys = await DataStore.get("gpgPublicKeys");
+            if (dataStorageKeys) {
+                const publicKeys = JSON.parse(dataStorageKeys);
+                if (publicKeys[senderId]) {
+                    verificationKeyArmored = publicKeys[senderId];
+                }
+            }
+        } catch (e) {
+            // fallback to default public key / Probably should send back an error
+            verificationKeyArmored = "";
+        }
     }
-        */
 
     const verificationKey = await readKey({ armoredKey: verificationKeyArmored }) as openpgp.PublicKey;
 
     const decrypted = await decrypt({
         message: await openpgp.readMessage({ armoredMessage: message }),
         decryptionKeys: [private_key],
-        expectSigned: true,
+        // Set to false to see the message anyways, but will show the key not verified warning
+        expectSigned: false,
         verificationKeys: [verificationKey]
     });
 
@@ -147,23 +163,7 @@ export default definePlugin({
                 message: message,
                 channel: ChannelStore.getChannel(message.channel_id),
                 onClick: async () => {
-                    const senderId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
-                    let senderPublicKey = settings.store.pgpPublicKey;
-
-                    // Load public keys from DataStore
-                    try {
-                        const dataStorageKeys = await DataStore.get("gpgPublicKeys");
-                        if (dataStorageKeys) {
-                            const publicKeys = JSON.parse(dataStorageKeys);
-                            if (publicKeys[senderId]) {
-                                senderPublicKey = publicKeys[senderId];
-                            }
-                        }
-                    } catch (e) {
-                        // fallback to default public key
-                    }
-
-                    const decrypted = await decryptMessage(message.content, senderPublicKey, message.author.id);
+                    const decrypted = await decryptMessage(message.content, message.author.id);
                     buildDecryptModal(decrypted.data, decrypted.verified);
                 }
             }

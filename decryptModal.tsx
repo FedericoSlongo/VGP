@@ -29,6 +29,6 @@ function DecryptModal(props: ModalProps & { message: string; verified: boolean; 
     );
 }
 
-export function buildDecryptModal(decryptedMessage, verified) {
+export function buildDecryptModal(decryptedMessage: string, verified: boolean) {
     openModal(props => <DecryptModal {...props} message={decryptedMessage} verified={verified} />);
 }
