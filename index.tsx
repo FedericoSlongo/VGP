@@ -7,11 +7,12 @@
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
-import { ChannelStore } from "@webpack/common";
+import { ChannelStore, SelectedChannelStore } from "@webpack/common";
 
 import { buildDecryptModal } from "./decryptModal";
 import { buildModal } from "./modal";
 import * as openpgp from "./openpgp.mjs";
+import { DataStore } from "@api/index";
 
 const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat }) => {
     if (!isMainChat) return null;
@@ -80,16 +81,39 @@ export async function encrypt(message: string, public_key_recipient: string): Pr
     return encrypted;
 }
 
-async function decryptMessage(message: string): Promise<any> {
-    const { decrypt } = openpgp;
+async function decryptMessage(message: string, public_key_recipient: string, authorId?: string): Promise<any> {
+    const { decrypt, readKey } = openpgp;
     const private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
+    let verificationKeyArmored = public_key_recipient;
+
+    /* // If the author is the current user, use the user's public key for verification
+    if (authorId && authorId === window.UserStore.getCurrentUser()?.id) {
+        verificationKeyArmored = settings.store.pgpPublicKey;
+    }
+        */
+
+    const verificationKey = await readKey({ armoredKey: verificationKeyArmored }) as openpgp.PublicKey;
 
     const decrypted = await decrypt({
         message: await openpgp.readMessage({ armoredMessage: message }),
         decryptionKeys: [private_key],
+        expectSigned: true,
+        verificationKeys: [verificationKey]
     });
 
-    return decrypted;
+    // Verify signature
+    const { signatures } = decrypted;
+    let verified = false;
+    if (signatures && signatures.length > 0) {
+        try {
+            await signatures[0].verified;
+            verified = true;
+        } catch {
+            verified = false;
+        }
+    }
+
+    return { ...decrypted, verified };
 }
 
 const settings = definePluginSettings({
@@ -123,8 +147,24 @@ export default definePlugin({
                 message: message,
                 channel: ChannelStore.getChannel(message.channel_id),
                 onClick: async () => {
-                    const decrypted = await decryptMessage(message.content);
-                    buildDecryptModal(decrypted.data);
+                    const senderId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
+                    let senderPublicKey = settings.store.pgpPublicKey;
+
+                    // Load public keys from DataStore
+                    try {
+                        const dataStorageKeys = await DataStore.get("gpgPublicKeys");
+                        if (dataStorageKeys) {
+                            const publicKeys = JSON.parse(dataStorageKeys);
+                            if (publicKeys[senderId]) {
+                                senderPublicKey = publicKeys[senderId];
+                            }
+                        }
+                    } catch (e) {
+                        // fallback to default public key
+                    }
+
+                    const decrypted = await decryptMessage(message.content, senderPublicKey, message.author.id);
+                    buildDecryptModal(decrypted.data, decrypted.verified);
                 }
             }
             : null;
