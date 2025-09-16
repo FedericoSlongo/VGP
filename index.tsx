@@ -8,14 +8,19 @@ import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { DataStore } from "@api/index";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
-import { ChannelStore, SelectedChannelStore, UserStore } from "@webpack/common";
+import { ChannelStore, SelectedChannelStore, showToast, Toasts, UserStore } from "@webpack/common";
 
 import { buildDecryptModal } from "./decryptModal";
 import { buildModal } from "./modal";
 import * as openpgp from "./openpgp.mjs";
 
-const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat }) => {
+const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat, channel }) => {
     if (!isMainChat) return null;
+
+    if (!channel || (channel.type !== 1 && channel.type !== 3)) {
+        return null; // not a DM or Group DM → don’t render
+    }
+
 
     return (
         <ChatBarButton
@@ -25,6 +30,7 @@ const ChatBarIcon: ChatBarButtonFactory = ({ isMainChat }) => {
             buttonProps={{
                 "aria-haspopup": "dialog",
             }}
+
         >
             <svg version="1.1"
                 id="Capa_1"
@@ -66,25 +72,51 @@ function formatKey(key: string): string {
 // ./openpgpjs-6.2.2/
 export async function encrypt(message: string, public_key_recipient: string): Promise<string> {
     const { encrypt, readKey } = openpgp;
-    const private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
-    const public_key = await readKey({ armoredKey: formatKey(settings.store.pgpPublicKey) }) as openpgp.PublicKey;
+    let private_key, public_key;
 
 
-    const pubKey_r = await readKey({ armoredKey: public_key_recipient }) as openpgp.PublicKey;
+    try {
+        private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
+        public_key = await readKey({ armoredKey: formatKey(settings.store.pgpPublicKey) }) as openpgp.PublicKey;
+    } catch (e) {
+        showToast("Cannot read your private or public key, try setting them again in the plugin settings", Toasts.Type.FAILURE);
+        throw e;
+    }
 
-    const encrypted = await encrypt({
-        message: await openpgp.createMessage({ text: message }),
-        encryptionKeys: [pubKey_r, public_key],
-        signingKeys: [private_key]
-    });
+    let pubKey_r;
+    try {
+        pubKey_r = await readKey({ armoredKey: public_key_recipient }) as openpgp.PublicKey;
+    } catch (e) {
+        showToast("The recipient's public key is not valid!", Toasts.Type.FAILURE);
+        throw e;
+    }
 
-    return encrypted;
+    try {
+        const encrypted = await encrypt({
+            message: await openpgp.createMessage({ text: message }),
+            encryptionKeys: [pubKey_r, public_key],
+            signingKeys: [private_key]
+        });
+
+        return encrypted;
+    } catch (e) {
+        if (e instanceof Error) {
+            showToast("Error during encryption.\n" + (e as Error).message, Toasts.Type.FAILURE);
+        }
+        throw e;
+    }
 }
 
 async function decryptMessage(message: string, authorId: string): Promise<any> {
     const { decrypt, readKey } = openpgp;
-    const private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
-    const senderId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
+    let private_key;
+    try {
+        private_key = await openpgp.readPrivateKey({ armoredKey: formatKey(settings.store.pgpPrivateKey) });
+    } catch (e) {
+        showToast("Cannot read personal private key", Toasts.Type.FAILURE);
+        throw e;
+    }
+
 
     let verificationKeyArmored: string = "";
 
@@ -94,6 +126,7 @@ async function decryptMessage(message: string, authorId: string): Promise<any> {
     } else {
         // Load public keys from DataStore
         try {
+            const senderId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
             const dataStorageKeys = await DataStore.get("gpgPublicKeys");
             if (dataStorageKeys) {
                 const publicKeys = JSON.parse(dataStorageKeys);
@@ -102,20 +135,27 @@ async function decryptMessage(message: string, authorId: string): Promise<any> {
                 }
             }
         } catch (e) {
-            // fallback to default public key / Probably should send back an error
-            verificationKeyArmored = "";
+            showToast("Cannot find the senders signature", Toasts.Type.FAILURE);
+            throw e;
         }
     }
 
     const verificationKey = await readKey({ armoredKey: verificationKeyArmored }) as openpgp.PublicKey;
 
-    const decrypted = await decrypt({
-        message: await openpgp.readMessage({ armoredMessage: message }),
-        decryptionKeys: [private_key],
-        // Set to false to see the message anyways, but will show the key not verified warning
-        expectSigned: false,
-        verificationKeys: [verificationKey]
-    });
+    let decrypted;
+    try {
+        decrypted = await decrypt({
+            message: await openpgp.readMessage({ armoredMessage: message }),
+            decryptionKeys: [private_key],
+            // Set to false to see the message anyways, but will show the key not verified warning
+            expectSigned: false,
+            verificationKeys: [verificationKey]
+        });
+    } catch (e) {
+        showToast("Cannot decrypt message: check your private key", Toasts.Type.FAILURE);
+        throw e;
+    }
+
 
     // Verify signature
     const { signatures } = decrypted;

@@ -14,7 +14,7 @@ import {
     ModalRoot,
     openModal,
 } from "@utils/modal";
-import { Button, ChannelStore, Forms, React, SelectedChannelStore, TextArea, useEffect } from "@webpack/common";
+import { Button, ChannelStore, Forms, React, SelectedChannelStore, showToast, TextArea, Toasts, useEffect } from "@webpack/common";
 
 import { encrypt } from "./index";
 
@@ -22,7 +22,13 @@ const localStorageKeysString = "gpgPublicKeys";
 
 function Modal(props: ModalProps) {
     // If the user already entered the public key for the recipient he doesn't have to insert it again...
-    const recipientId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
+    let recipientId;
+    try {
+        recipientId = ChannelStore.getChannel(SelectedChannelStore.getChannelId()).recipients[0];
+    } catch (e) {
+        showToast("Cannot find the recipient id of the message", Toasts.Type.FAILURE);
+        throw e;
+    }
     const [pKey, setPKey] = React.useState("");
     const [message, setMessage] = React.useState("");
     const [publicKeyDictChange, setPublicKeyDictChange] = React.useState(false);
@@ -70,14 +76,19 @@ function Modal(props: ModalProps) {
                 <Button
                     color={Button.Colors.GREEN}
                     onClick={() => {
-                        if (publicKeyDictChange) {
-                            DataStore.set(localStorageKeysString, JSON.stringify(publicKeys));
-                        }
 
-                        encrypt(message, pKey).then(encryptedMessage => {
-                            insertTextIntoChatInputBox(encryptedMessage);
+                        try {
+                            encrypt(message, pKey).then(encryptedMessage => {
+                                if (publicKeyDictChange) {
+                                    DataStore.set(localStorageKeysString, JSON.stringify(publicKeys));
+                                }
+
+                                insertTextIntoChatInputBox(encryptedMessage);
+                                props.onClose();
+                            });
+                        } catch {
                             props.onClose();
-                        });
+                        }
                     }}
                 >
                     Send
@@ -88,5 +99,9 @@ function Modal(props: ModalProps) {
 }
 
 export function buildModal(): any {
-    openModal(props => <Modal {...props} />);
+    try {
+        openModal(props => <Modal {...props} />);
+    } catch {
+        return;
+    }
 }
